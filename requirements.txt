@@ -1,0 +1,13 @@
+# Discord Bot
+discord.py>=2.6.3
+
+# Database
+SQLModel>=0.0.24
+SQLAlchemy>=2.0.43
+alembic>=1.16.5
+
+# Environment Variables
+python-dotenv>=1.1.1
+
+# Logging
+PyYAML>=6.0.2
