@@ -27,6 +27,7 @@ def init_database():
     global engine, async_engine, async_session_factory
 
     database_url = os.getenv('DATABASE_URL')
+    db_logger.debug(f"Database URL: {database_url}")
     if not database_url:
         raise ValueError(
             "DATABASE_URL environment variable is not set. "

@@ -1,7 +1,7 @@
 from discord.ext import commands
 import discord
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from database import get_async_session
 from models import User, MessageActivity, VoiceActivity, PresenceActivity, UserNameHistory
 from sqlmodel import select
@@ -47,8 +47,8 @@ class Events(commands.Cog):
         async with get_async_session() as session:
             # Check if user exists
             statement = select(User).where(User.user_id == user.id)
-            result = await session.exec(statement)
-            db_user = result.first()
+            result = await session.execute(statement)
+            db_user = result.scalar_one_or_none()
 
             if db_user:
                 # Update existing user info if changed
@@ -64,21 +64,21 @@ class Events(commands.Cog):
                     updated = True
 
                 if updated:
-                    db_user.last_updated = datetime.utcnow()
+                    db_user.last_updated = datetime.now(timezone.utc)
                     session.add(db_user)
                     await session.commit()
                     await session.refresh(db_user)
                     events_logger.debug(f"Updated user info for {user.name} ({user.id})")
             else:
                 # Create new user - use member join date if available
-                join_date = member.joined_at if member else datetime.utcnow()
+                join_date = member.joined_at if member else datetime.now(timezone.utc)
                 db_user = User(
                     user_id=user.id,
                     username=user.name,
                     display_name=user.display_name,
                     global_name=user.global_name,
                     first_seen=join_date,
-                    last_updated=datetime.utcnow()
+                    last_updated=datetime.now(timezone.utc)
                 )
                 session.add(db_user)
                 await session.commit()
@@ -94,8 +94,8 @@ class Events(commands.Cog):
 
         Logs bot information and connected guild count.
         """
-        events_logger.info(f'Bot is ready! Logged in as {self.bot.user} (ID: {self.bot.user.id})')
-        events_logger.info(f'Connected to {len(self.bot.guilds)} guilds')
+        events_logger.info(f'Bot ready! Logged in as {self.bot.user} (ID: {self.bot.user.id})')
+        events_logger.info(f'Monitoring {len(self.bot.guilds)} guild{"s" if len(self.bot.guilds) != 1 else ""}')
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -127,23 +127,50 @@ class Events(commands.Cog):
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         """
-        Event handler for when a member is updated (nickname, roles, status, etc.).
+        Event handler for when a member is updated (nickname, roles, etc.).
+
+        Note: This handles name changes only. Presence updates are handled
+        by on_presence_update for better reliability.
 
         Args:
             before: Member state before the update
             after: Member state after the update
         """
         try:
+            # Handle name changes only
             if (before.name != after.name or
                     before.display_name != after.display_name or
                     before.global_name != after.global_name):
                 await self._handle_name_change(before, after)
 
-            if before.status != after.status or before.activities != after.activities:
-                await self._handle_presence_change(before, after)
-
         except Exception as e:
             events_logger.error(f"Error handling member update for {after.name}: {e}")
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before, after):
+        """
+        Event handler for presence updates (status and activity changes).
+
+        This is the primary event for tracking user presence changes,
+        more reliable than on_member_update for presence data.
+
+        Args:
+            before: Member state before presence update
+            after: Member state after presence update
+        """
+        try:
+            # Only process if there are actual changes
+            if before.status == after.status and before.activities == after.activities:
+                return
+
+            # Ensure user exists in database
+            await self.get_or_create_user(after, after)
+
+            # Record the presence change
+            await self._handle_presence_change(before, after)
+
+        except Exception as e:
+            events_logger.error(f"Error handling presence update for {after.name}: {e}")
 
     async def _handle_name_change(self, before: discord.Member, after: discord.Member):
         """
@@ -174,7 +201,7 @@ class Events(commands.Cog):
                     old_global_name=before.global_name if change_type == "global_name" else None,
                     new_global_name=after.global_name if change_type == "global_name" else None,
                     change_type=change_type,
-                    changed_at=datetime.utcnow()
+                    changed_at=datetime.now(timezone.utc)
                 )
                 session.add(name_history)
                 await session.commit()
@@ -188,19 +215,20 @@ class Events(commands.Cog):
             before: Member state before the presence change
             after: Member state after the presence change
         """
+
         async with get_async_session() as session:
             # Get the last presence record to calculate duration
             statement = select(PresenceActivity).where(
                 PresenceActivity.user_id == after.id
             ).order_by(PresenceActivity.changed_at.desc()).limit(1)
 
-            result = await session.exec(statement)
-            last_presence = result.first()
+            result = await session.execute(statement)
+            last_presence = result.scalar_one_or_none()
 
             # Calculate duration of previous status
             duration_seconds = None
             if last_presence and last_presence.duration_seconds is None:
-                duration_seconds = int((datetime.utcnow() - last_presence.changed_at).total_seconds())
+                duration_seconds = int((datetime.now(timezone.utc) - last_presence.changed_at).total_seconds())
                 last_presence.duration_seconds = duration_seconds
                 session.add(last_presence)
 
@@ -219,14 +247,20 @@ class Events(commands.Cog):
                 previous_status=before.status.name if before.status != after.status else None,
                 activity_type=activity_type,
                 activity_name=activity_name,
-                changed_at=datetime.utcnow()
+                changed_at=datetime.now(timezone.utc)
             )
 
             session.add(presence)
             await session.commit()
 
             if before.status != after.status:
-                events_logger.debug(f"Status change for {after.name}: {before.status.name} -> {after.status.name}")
+                events_logger.info(f"{after.name}: {before.status.name} → {after.status.name}")
+
+            if before.activities != after.activities:
+                if after.activities and activity_name:
+                    events_logger.info(f"{after.name}: Activity → {activity_name}")
+                elif not after.activities:
+                    events_logger.info(f"{after.name}: Activity cleared")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -283,8 +317,8 @@ class Events(commands.Cog):
         try:
             async with get_async_session() as session:
                 statement = select(MessageActivity).where(MessageActivity.message_id == after.id)
-                result = await session.exec(statement)
-                message_record = result.first()
+                result = await session.execute(statement)
+                message_record = result.scalar_one_or_none()
 
                 if message_record:
                     message_record.character_count = len(after.content) if after.content else 0
@@ -330,7 +364,7 @@ class Events(commands.Cog):
         try:
             await self.get_or_create_user(member, member)
 
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
 
             if before.channel and not after.channel:
                 await self._handle_voice_leave(member, before, current_time)
@@ -364,8 +398,8 @@ class Events(commands.Cog):
                 VoiceActivity.left_at.is_(None)
             ).order_by(VoiceActivity.joined_at.desc()).limit(1)
 
-            result = await session.exec(statement)
-            voice_session = result.first()
+            result = await session.execute(statement)
+            voice_session = result.scalar_one_or_none()
 
             if voice_session:
                 # Update the session with leave time and duration

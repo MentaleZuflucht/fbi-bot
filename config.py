@@ -2,9 +2,13 @@ from pathlib import Path
 import yaml
 import logging.config
 import logging
+from dotenv import load_dotenv
 
 # Base directory of the project
 BASE_DIR = Path(__file__).resolve().parent
+
+# Load environment variables from .env file
+load_dotenv(BASE_DIR / '.env')
 
 # Log file path
 LOG_FOLDER_PATH = BASE_DIR / 'logs'

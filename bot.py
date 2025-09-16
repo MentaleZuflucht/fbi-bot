@@ -1,10 +1,10 @@
 import discord
 import logging.config
+import os
+import asyncio
 from config import setup_logging, COG_FOLDER_PATH
 from discord.ext import commands
 from database import init_database
-import os
-import asyncio
 
 setup_logging()
 bot_logger = logging.getLogger('bot')
