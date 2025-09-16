@@ -5,6 +5,7 @@ discord.py>=2.6.3
 SQLModel>=0.0.24
 SQLAlchemy>=2.0.43
 alembic>=1.16.5
+asyncpg>=0.30.0
 
 # Environment Variables
 python-dotenv>=1.1.1

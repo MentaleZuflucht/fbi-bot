@@ -49,3 +49,8 @@ loggers:
     level: DEBUG
     handlers: [rotating_file, error_file, console]
     propagate: no
+
+  bot.database:
+    level: DEBUG
+    handlers: [rotating_file, error_file, console]
+    propagate: no
