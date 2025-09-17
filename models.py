@@ -6,7 +6,7 @@ from enum import Enum
 
 
 class MessageType(str, Enum):
-    """Discord message types as Python enum with official Discord API values."""
+    """Discord message types as Python enum."""
     DEFAULT = "default"
     RECIPIENT_ADD = "recipient_add"
     RECIPIENT_REMOVE = "recipient_remove"
@@ -65,18 +65,27 @@ class ActivityType(str, Enum):
     WATCHING = "watching"
 
 
+class VoiceStateType(str, Enum):
+    """Discord voice state types as Python enum."""
+    DEAF = "deaf"
+    MUTE = "mute"
+    SELF_DEAF = "self_deaf"
+    SELF_MUTE = "self_mute"
+    SELF_STREAM = "self_stream"
+    SELF_VIDEO = "self_video"
+
+
 class User(SQLModel, table=True):
     """
-    Represents a Discord user in the database for a single guild.
+    Represents a Discord user in the database.
 
-    Stores only immutable user information. Current names are derived from
-    the most recent entry in the user_name_history table.
+    Current names are derived from the most recent entry in the user_name_history table.
 
     Attributes:
         user_id: Discord user ID (snowflake) - primary key
         first_seen: When the user first joined the Discord server (member since date)
     """
-    __tablename__ = "users"
+    __tablename__ = "user"
 
     user_id: int = Field(
         primary_key=True,
@@ -91,7 +100,7 @@ class User(SQLModel, table=True):
     )
 
     messages: List["MessageActivity"] = Relationship(back_populates="user")
-    voice_sessions: List["VoiceActivity"] = Relationship(back_populates="user")
+    voice_sessions: List["VoiceSession"] = Relationship(back_populates="user")
     presence_logs: List["PresenceStatusLog"] = Relationship(back_populates="user")
     activity_logs: List["ActivityLog"] = Relationship(back_populates="user")
     custom_statuses: List["CustomStatus"] = Relationship(back_populates="user")
@@ -100,17 +109,16 @@ class User(SQLModel, table=True):
 
 class MessageActivity(SQLModel, table=True):
     """
-    Tracks when users send messages in channels within the monitored guild.
+    Tracks when users send messages in channels.
 
-    Records every message sent by users for analysis of messaging patterns,
-    activity levels, and communication statistics. Does not store message content
-    for privacy, only metadata.
+    Records every message sent by users for analysis of messaging patterns and
+    activity levels. Does not store message content, only metadata.
 
     Attributes:
         message_id: Discord message ID (snowflake) - primary key
         user_id: Discord user ID who sent the message
         channel_id: Discord channel ID where message was sent
-        message_type: Discord message type enum (default, reply, system messages, etc.)
+        message_type: Discord message type enum
         has_attachments: Whether the message contained file attachments
         has_embeds: Whether the message contained rich embeds
         character_count: Length of the message content in characters
@@ -154,12 +162,12 @@ class MessageActivity(SQLModel, table=True):
     user: User = Relationship(back_populates="messages")
 
 
-class VoiceActivity(SQLModel, table=True):
+class VoiceSession(SQLModel, table=True):
     """
-    Tracks voice channel activity and session durations within the monitored guild.
+    Tracks voice channel sessions (join/leave events).
 
-    Records when users join/leave voice channels and captures voice states during sessions.
-    Duration can be calculated dynamically from joined_at and left_at timestamps.
+    Records when users join and leave voice channels. Individual voice states
+    are tracked separately in VoiceStateLog.
 
     Attributes:
         id: Auto-incrementing primary key
@@ -167,12 +175,8 @@ class VoiceActivity(SQLModel, table=True):
         channel_id: Discord voice channel ID
         joined_at: Timestamp when user joined the voice channel
         left_at: Timestamp when user left (NULL if still in channel)
-        was_muted: Whether user was muted during the session
-        was_deafened: Whether user was deafened during the session
-        was_streaming: Whether user was streaming during the session
-        was_video: Whether user had video enabled during the session
     """
-    __tablename__ = "voice_activity"
+    __tablename__ = "voice_sessions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -198,26 +202,66 @@ class VoiceActivity(SQLModel, table=True):
         description="When user left the voice channel (NULL if still in channel)"
     )
 
-    was_muted: bool = Field(default=False, description="Whether user was muted during session")
-    was_deafened: bool = Field(default=False, description="Whether user was deafened during session")
-    was_streaming: bool = Field(default=False, description="Whether user was streaming during session")
-    was_video: bool = Field(default=False, description="Whether user had video enabled during session")
-
     user: User = Relationship(back_populates="voice_sessions")
+    voice_states: List["VoiceStateLog"] = Relationship(back_populates="session")
+
+
+class VoiceStateLog(SQLModel, table=True):
+    """
+    Tracks individual voice state changes during voice sessions.
+
+    Records when users change their voice states
+    during a voice session. Duration can be calculated from started_at and ended_at.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        session_id: Reference to the voice session
+        state_type: Type of voice state
+        started_at: When this state became active
+        ended_at: When this state ended (NULL if still active)
+    """
+    __tablename__ = "voice_state_log"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(
+        foreign_key="voice_sessions.id",
+        index=True,
+        description="Reference to the voice session"
+    )
+    state_type: VoiceStateType = Field(
+        sa_type=SQLEnum(VoiceStateType, name="voice_state_type_enum"),
+        index=True,
+        description="Type of voice state"
+    )
+
+    started_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        index=True,
+        description="When this state became active"
+    )
+    ended_at: Optional[datetime] = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        description="When this state ended (NULL if still active)"
+    )
+
+    session: VoiceSession = Relationship(back_populates="voice_states")
 
 
 class PresenceStatusLog(SQLModel, table=True):
     """
-    Tracks user presence status changes using normalized status types.
+    Tracks user presence status periods with explicit start/end times.
 
-    This is the N:M association table between users and status types,
-    with additional timestamp data for when the status change occurred.
+    Records when users enter and exit specific presence states (online, idle, dnd, offline).
+    Duration can be calculated directly from set_at and cleared_at timestamps.
 
     Attributes:
         id: Auto-incrementing primary key
         user_id: Discord user ID whose status changed
-        status_type: Reference to the Discord status
-        changed_at: Timestamp when the status changed
+        status_type: The Discord presence status
+        set_at: When this status became active
+        cleared_at: When this status ended (NULL if still active)
     """
     __tablename__ = "presence_status_log"
 
@@ -231,14 +275,19 @@ class PresenceStatusLog(SQLModel, table=True):
     status_type: DiscordStatus = Field(
         sa_type=SQLEnum(DiscordStatus, name="discord_status_enum"),
         index=True,
-        description="Reference to Discord status"
+        description="The Discord presence status"
     )
 
-    changed_at: datetime = Field(
+    set_at: datetime = Field(
         sa_type=DateTime(timezone=True),
         default_factory=lambda: datetime.now(timezone.utc),
         index=True,
-        description="When the status changed"
+        description="When this status became active"
+    )
+    changed_at: Optional[datetime] = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        description="When this status ended (NULL if still active)"
     )
 
     user: User = Relationship(back_populates="presence_logs")
@@ -248,14 +297,13 @@ class ActivityLog(SQLModel, table=True):
     """
     Tracks user activities like playing games, streaming, listening to music.
 
-    This table records when users start/stop activities, enabling analysis of
-    gaming habits, streaming patterns, and entertainment preferences.
+    This table records when users start/stop activities with correct activity types.
 
     Attributes:
         id: Auto-incrementing primary key
         user_id: Discord user ID who started/stopped the activity
-        activity_type: Type of activity (playing, streaming, listening, watching)
-        activity_name: Name of the activity (game name, stream title, song, etc.)
+        activity_type: Type of activity
+        activity_name: Name of the activity
         started_at: When the activity started
         ended_at: When the activity ended (NULL if still active)
     """
@@ -300,7 +348,7 @@ class CustomStatus(SQLModel, table=True):
     Tracks custom status changes separately from presence activity.
 
     Custom statuses are user-set messages with optional emojis that appear
-    below their username. These change independently of activities and presence.
+    below their username.
 
     Attributes:
         id: Auto-incrementing primary key
@@ -348,10 +396,9 @@ class CustomStatus(SQLModel, table=True):
 
 class UserNameHistory(SQLModel, table=True):
     """
-    Stores all username states over time. This is the single source of truth for user names.
+    Stores all username states over time. This is the single source for user names.
 
     Each row represents a user's name state at a specific point in time.
-    The most recent row for each user contains their current names.
 
     Attributes:
         id: Auto-incrementing primary key
@@ -372,7 +419,7 @@ class UserNameHistory(SQLModel, table=True):
         description="Discord user ID"
     )
 
-    username: Optional[str] = Field(default=None, max_length=32, description="Discord username")
+    username: str = Field(default=None, max_length=32, description="Discord username")
     display_name: Optional[str] = Field(default=None, max_length=32, description="Discord display name")
     global_name: Optional[str] = Field(default=None, max_length=32, description="Discord global display name")
 
@@ -393,9 +440,12 @@ class UserNameHistory(SQLModel, table=True):
 
 
 Index('idx_message_activity_user_sent', 'message_activity.user_id', 'message_activity.sent_at')
-Index('idx_voice_activity_user_joined', 'voice_activity.user_id', 'voice_activity.joined_at')
-Index('idx_presence_status_log_user_changed', 'presence_status_log.user_id', 'presence_status_log.changed_at')
-Index('idx_presence_status_log_status_type', 'presence_status_log.status_type', 'presence_status_log.changed_at')
+Index('idx_voice_sessions_user_joined', 'voice_sessions.user_id', 'voice_sessions.joined_at')
+Index('idx_voice_state_log_session_started', 'voice_state_log.session_id', 'voice_state_log.started_at')
+Index('idx_voice_state_log_state_type', 'voice_state_log.state_type', 'voice_state_log.started_at')
+Index('idx_presence_status_log_user_set', 'presence_status_log.user_id', 'presence_status_log.set_at')
+Index('idx_presence_status_log_status_type', 'presence_status_log.status_type', 'presence_status_log.set_at')
+Index('idx_presence_status_log_cleared', 'presence_status_log.user_id', 'presence_status_log.cleared_at')
 Index('idx_activity_log_user_started', 'activity_log.user_id', 'activity_log.started_at')
 Index('idx_custom_status_user_set', 'custom_status.user_id', 'custom_status.set_at')
 Index('idx_user_names_current', 'user_names_history.user_id', 'user_names_history.effective_until')
@@ -434,6 +484,36 @@ CheckConstraint(
 CheckConstraint(
     "status_type IN ('online', 'idle', 'dnd', 'offline', 'streaming')",
     name='ck_presence_status_enum_valid'
+)
+
+CheckConstraint(
+    "state_type IN ('deaf', 'mute', 'self_deaf', 'self_mute', 'self_stream', 'self_video')",
+    name='ck_voice_state_type_valid'
+)
+
+CheckConstraint(
+    "(ended_at IS NULL) OR (ended_at >= started_at)",
+    name='ck_voice_state_log_valid_period'
+)
+
+CheckConstraint(
+    "(left_at IS NULL) OR (left_at >= joined_at)",
+    name='ck_voice_session_valid_period'
+)
+
+CheckConstraint(
+    "(ended_at IS NULL) OR (ended_at >= started_at)",
+    name='ck_activity_log_valid_period'
+)
+
+CheckConstraint(
+    "(cleared_at IS NULL) OR (cleared_at >= set_at)",
+    name='ck_custom_status_valid_period'
+)
+
+CheckConstraint(
+    "(changed_at IS NULL) OR (changed_at >= set_at)",
+    name='ck_presence_status_valid_period'
 )
 
 Base = SQLModel.metadata
