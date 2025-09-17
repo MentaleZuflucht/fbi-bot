@@ -132,7 +132,7 @@ class MessageActivity(SQLModel, table=True):
         description="Discord message ID (snowflake)"
     )
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID who sent the message"
@@ -180,7 +180,7 @@ class VoiceSession(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -267,7 +267,7 @@ class PresenceStatusLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -311,7 +311,7 @@ class ActivityLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -362,7 +362,7 @@ class CustomStatus(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -413,7 +413,7 @@ class UserNameHistory(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="users.user_id",
+        foreign_key="user.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -454,24 +454,24 @@ Index('idx_user_names_unique_current', 'user_names_history.user_id', unique=True
       postgresql_where='effective_until IS NULL', mysql_length={'user_id': None})
 
 CheckConstraint(
-    "activity_type IN ('competing', 'custom', 'listening', 'playing', 'streaming', 'watching')",
+    "activity_type IN ('COMPETING', 'CUSTOM', 'LISTENING', 'PLAYING', 'STREAMING', 'WATCHING')",
     name='ck_activity_type_valid'
 )
 
 
 CheckConstraint(
-    "message_type IN ('default', 'recipient_add', 'recipient_remove', 'call', "
-    "'channel_name_change', 'channel_icon_change', 'channel_pinned_message', 'user_join', "
-    "'guild_boost', 'guild_boost_tier_1', 'guild_boost_tier_2', 'guild_boost_tier_3', "
-    "'channel_follow_add', 'guild_discovery_disqualified', 'guild_discovery_requalified', "
-    "'guild_discovery_grace_period_initial_warning', 'guild_discovery_grace_period_final_warning', "
-    "'thread_created', 'reply', 'chat_input_command', 'thread_starter_message', "
-    "'guild_invite_reminder', 'context_menu_command', 'role_subscription_purchase', "
-    "'interaction_premium_upsell', 'stage_start', 'stage_end', 'stage_speaker', "
-    "'stage_raise_hand', 'stage_topic', 'guild_application_premium_subscription', "
-    "'guild_incident_alert_mode_enabled', 'guild_incident_alert_mode_disabled', "
-    "'guild_incident_report_raid', 'guild_incident_report_false_alarm', "
-    "'purchase_notification', 'poll_result')",
+    "message_type IN ('DEFAULT', 'RECIPIENT_ADD', 'RECIPIENT_REMOVE', 'CALL', "
+    "'CHANNEL_NAME_CHANGE', 'CHANNEL_ICON_CHANGE', 'CHANNEL_PINNED_MESSAGE', 'USER_JOIN', "
+    "'GUILD_BOOST', 'GUILD_BOOST_TIER_1', 'GUILD_BOOST_TIER_2', 'GUILD_BOOST_TIER_3', "
+    "'CHANNEL_FOLLOW_ADD', 'GUILD_DISCOVERY_DISQUALIFIED', 'GUILD_DISCOVERY_REQUALIFIED', "
+    "'GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING', 'GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING', "
+    "'THREAD_CREATED', 'REPLY', 'CHAT_INPUT_COMMAND', 'THREAD_STARTER_MESSAGE', "
+    "'GUILD_INVITE_REMINDER', 'CONTEXT_MENU_COMMAND', 'ROLE_SUBSCRIPTION_PURCHASE', "
+    "'INTERACTION_PREMIUM_UPSELL', 'STAGE_START', 'STAGE_END', 'STAGE_SPEAKER', "
+    "'STAGE_RAISE_HAND', 'STAGE_TOPIC', 'GUILD_APPLICATION_PREMIUM_SUBSCRIPTION', "
+    "'GUILD_INCIDENT_ALERT_MODE_ENABLED', 'GUILD_INCIDENT_ALERT_MODE_DISABLED', "
+    "'GUILD_INCIDENT_REPORT_RAID', 'GUILD_INCIDENT_REPORT_FALSE_ALARM', "
+    "'PURCHASE_NOTIFICATION', 'POLL_RESULT')",
     name='ck_message_type_valid'
 )
 
@@ -482,12 +482,12 @@ CheckConstraint(
 )
 
 CheckConstraint(
-    "status_type IN ('online', 'idle', 'dnd', 'offline', 'streaming')",
+    "status_type IN ('ONLINE', 'IDLE', 'DND', 'OFFLINE', 'STREAMING')",
     name='ck_presence_status_enum_valid'
 )
 
 CheckConstraint(
-    "state_type IN ('deaf', 'mute', 'self_deaf', 'self_mute', 'self_stream', 'self_video')",
+    "state_type IN ('DEAF', 'MUTE', 'SELF_DEAF', 'SELF_MUTE', 'SELF_STREAM', 'SELF_VIDEO')",
     name='ck_voice_state_type_valid'
 )
 

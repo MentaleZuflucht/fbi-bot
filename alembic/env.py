@@ -4,10 +4,7 @@ from dotenv import load_dotenv
 from sqlmodel import SQLModel
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
 from alembic import context
-
-# Import all models to ensure they're registered with SQLModel
 import models
 
 # Load environment variables from .env file
