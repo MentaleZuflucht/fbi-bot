@@ -1,23 +1,80 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import BigInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, CheckConstraint, Index, Enum as SQLEnum
+from enum import Enum
+
+
+class MessageType(str, Enum):
+    """Discord message types as Python enum with official Discord API values."""
+    DEFAULT = "default"
+    RECIPIENT_ADD = "recipient_add"
+    RECIPIENT_REMOVE = "recipient_remove"
+    CALL = "call"
+    CHANNEL_NAME_CHANGE = "channel_name_change"
+    CHANNEL_ICON_CHANGE = "channel_icon_change"
+    CHANNEL_PINNED_MESSAGE = "channel_pinned_message"
+    USER_JOIN = "user_join"
+    GUILD_BOOST = "guild_boost"
+    GUILD_BOOST_TIER_1 = "guild_boost_tier_1"
+    GUILD_BOOST_TIER_2 = "guild_boost_tier_2"
+    GUILD_BOOST_TIER_3 = "guild_boost_tier_3"
+    CHANNEL_FOLLOW_ADD = "channel_follow_add"
+    GUILD_DISCOVERY_DISQUALIFIED = "guild_discovery_disqualified"
+    GUILD_DISCOVERY_REQUALIFIED = "guild_discovery_requalified"
+    GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING = "guild_discovery_grace_period_initial_warning"
+    GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING = "guild_discovery_grace_period_final_warning"
+    THREAD_CREATED = "thread_created"
+    REPLY = "reply"
+    CHAT_INPUT_COMMAND = "chat_input_command"
+    THREAD_STARTER_MESSAGE = "thread_starter_message"
+    GUILD_INVITE_REMINDER = "guild_invite_reminder"
+    CONTEXT_MENU_COMMAND = "context_menu_command"
+    ROLE_SUBSCRIPTION_PURCHASE = "role_subscription_purchase"
+    INTERACTION_PREMIUM_UPSELL = "interaction_premium_upsell"
+    STAGE_START = "stage_start"
+    STAGE_END = "stage_end"
+    STAGE_SPEAKER = "stage_speaker"
+    STAGE_RAISE_HAND = "stage_raise_hand"
+    STAGE_TOPIC = "stage_topic"
+    GUILD_APPLICATION_PREMIUM_SUBSCRIPTION = "guild_application_premium_subscription"
+    GUILD_INCIDENT_ALERT_MODE_ENABLED = "guild_incident_alert_mode_enabled"
+    GUILD_INCIDENT_ALERT_MODE_DISABLED = "guild_incident_alert_mode_disabled"
+    GUILD_INCIDENT_REPORT_RAID = "guild_incident_report_raid"
+    GUILD_INCIDENT_REPORT_FALSE_ALARM = "guild_incident_report_false_alarm"
+    PURCHASE_NOTIFICATION = "purchase_notification"
+    POLL_RESULT = "poll_result"
+
+
+class DiscordStatus(str, Enum):
+    """Discord status types as Python enum."""
+    ONLINE = "online"
+    IDLE = "idle"
+    DND = "dnd"
+    OFFLINE = "offline"
+    STREAMING = "streaming"
+
+
+class ActivityType(str, Enum):
+    """Discord activity types as Python enum."""
+    COMPETING = "competing"
+    CUSTOM = "custom"
+    LISTENING = "listening"
+    PLAYING = "playing"
+    STREAMING = "streaming"
+    WATCHING = "watching"
 
 
 class User(SQLModel, table=True):
     """
     Represents a Discord user in the database for a single guild.
 
-    Stores basic user information and serves as the primary reference
-    for all user activity tracking within the monitored Discord server.
+    Stores only immutable user information. Current names are derived from
+    the most recent entry in the user_name_history table.
 
     Attributes:
         user_id: Discord user ID (snowflake) - primary key
-        username: Current Discord username
-        display_name: Current Discord display name (server nickname)
-        global_name: Discord global display name
         first_seen: When the user first joined the Discord server (member since date)
-        last_updated: When user information was last updated by the bot
     """
     __tablename__ = "users"
 
@@ -26,24 +83,19 @@ class User(SQLModel, table=True):
         sa_type=BigInteger,
         description="Discord user ID (snowflake)"
     )
-    username: Optional[str] = Field(default=None, max_length=32, description="Current Discord username")
-    display_name: Optional[str] = Field(default=None, max_length=32, description="Current Discord display name")
-    global_name: Optional[str] = Field(default=None, max_length=32, description="Discord global display name")
 
     first_seen: datetime = Field(
         sa_type=DateTime(timezone=True),
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="When the user first joined the Discord server (member since)"
-    )
-    last_updated: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=datetime.utcnow,
-        description="When user info was last updated"
     )
 
     messages: List["MessageActivity"] = Relationship(back_populates="user")
     voice_sessions: List["VoiceActivity"] = Relationship(back_populates="user")
-    presence_logs: List["PresenceActivity"] = Relationship(back_populates="user")
+    presence_logs: List["PresenceStatusLog"] = Relationship(back_populates="user")
+    activity_logs: List["ActivityLog"] = Relationship(back_populates="user")
+    custom_statuses: List["CustomStatus"] = Relationship(back_populates="user")
+    name_history: List["UserNameHistory"] = Relationship(back_populates="user")
 
 
 class MessageActivity(SQLModel, table=True):
@@ -55,11 +107,10 @@ class MessageActivity(SQLModel, table=True):
     for privacy, only metadata.
 
     Attributes:
-        id: Auto-incrementing primary key
+        message_id: Discord message ID (snowflake) - primary key
         user_id: Discord user ID who sent the message
         channel_id: Discord channel ID where message was sent
-        message_id: Discord message ID (snowflake) - unique identifier
-        message_type: Type of Discord message (default, reply, etc.)
+        message_type: Discord message type enum (default, reply, system messages, etc.)
         has_attachments: Whether the message contained file attachments
         has_embeds: Whether the message contained rich embeds
         character_count: Length of the message content in characters
@@ -67,7 +118,11 @@ class MessageActivity(SQLModel, table=True):
     """
     __tablename__ = "message_activity"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    message_id: int = Field(
+        primary_key=True,
+        sa_type=BigInteger,
+        description="Discord message ID (snowflake)"
+    )
     user_id: int = Field(
         foreign_key="users.user_id",
         sa_type=BigInteger,
@@ -79,14 +134,13 @@ class MessageActivity(SQLModel, table=True):
         index=True,
         description="Discord channel ID where message was sent"
     )
-    message_id: int = Field(
-        sa_type=BigInteger,
-        unique=True,
-        index=True,
-        description="Discord message ID (snowflake)"
-    )
 
-    message_type: Optional[str] = Field(default="default", max_length=20, description="Type of message")
+    message_type: MessageType = Field(
+        default=MessageType.DEFAULT,
+        sa_type=SQLEnum(MessageType, name="message_type_enum"),
+        description="Discord message type",
+        sa_column_kwargs={"nullable": False}
+    )
     has_attachments: bool = Field(default=False, description="Whether message had attachments")
     has_embeds: bool = Field(default=False, description="Whether message had embeds")
     character_count: Optional[int] = Field(default=None, description="Length of message content")
@@ -104,8 +158,8 @@ class VoiceActivity(SQLModel, table=True):
     """
     Tracks voice channel activity and session durations within the monitored guild.
 
-    Records when users join/leave voice channels, calculates session durations,
-    and captures voice states during sessions for detailed voice activity analysis.
+    Records when users join/leave voice channels and captures voice states during sessions.
+    Duration can be calculated dynamically from joined_at and left_at timestamps.
 
     Attributes:
         id: Auto-incrementing primary key
@@ -113,7 +167,6 @@ class VoiceActivity(SQLModel, table=True):
         channel_id: Discord voice channel ID
         joined_at: Timestamp when user joined the voice channel
         left_at: Timestamp when user left (NULL if still in channel)
-        duration_seconds: Total session duration in seconds
         was_muted: Whether user was muted during the session
         was_deafened: Whether user was deafened during the session
         was_streaming: Whether user was streaming during the session
@@ -144,10 +197,6 @@ class VoiceActivity(SQLModel, table=True):
         default=None,
         description="When user left the voice channel (NULL if still in channel)"
     )
-    duration_seconds: Optional[int] = Field(
-        default=None,
-        description="Duration of voice session in seconds (calculated when user leaves)"
-    )
 
     was_muted: bool = Field(default=False, description="Whether user was muted during session")
     was_deafened: bool = Field(default=False, description="Whether user was deafened during session")
@@ -157,25 +206,20 @@ class VoiceActivity(SQLModel, table=True):
     user: User = Relationship(back_populates="voice_sessions")
 
 
-class PresenceActivity(SQLModel, table=True):
+class PresenceStatusLog(SQLModel, table=True):
     """
-    Tracks user presence status changes and activities within the monitored guild.
+    Tracks user presence status changes using normalized status types.
 
-    Records when users change their presence status (online, offline, idle, dnd)
-    and what activities they're engaged in, enabling analysis of online patterns
-    and user behavior trends.
+    This is the N:M association table between users and status types,
+    with additional timestamp data for when the status change occurred.
 
     Attributes:
         id: Auto-incrementing primary key
-        user_id: Discord user ID whose presence changed
-        status: Current user status (online, offline, idle, dnd)
-        previous_status: Previous status before this change
-        activity_type: Type of activity (playing, streaming, listening, watching, custom)
-        activity_name: Name/description of the current activity
-        changed_at: Timestamp when the presence status changed
-        duration_seconds: Duration of the previous status in seconds
+        user_id: Discord user ID whose status changed
+        status_type: Reference to the Discord status
+        changed_at: Timestamp when the status changed
     """
-    __tablename__ = "presence_activity"
+    __tablename__ = "presence_status_log"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -184,61 +228,38 @@ class PresenceActivity(SQLModel, table=True):
         index=True,
         description="Discord user ID"
     )
-
-    status: str = Field(
-        max_length=20,
-        description="User status (online, offline, idle, dnd)"
-    )
-    previous_status: Optional[str] = Field(
-        default=None,
-        max_length=20,
-        description="Previous status before this change"
-    )
-
-    activity_type: Optional[str] = Field(
-        default=None,
-        max_length=20,
-        description="Type of activity (playing, streaming, listening, watching, custom)"
-    )
-    activity_name: Optional[str] = Field(
-        default=None,
-        max_length=128,
-        description="Name of the activity"
+    status_type: DiscordStatus = Field(
+        sa_type=SQLEnum(DiscordStatus, name="discord_status_enum"),
+        index=True,
+        description="Reference to Discord status"
     )
 
     changed_at: datetime = Field(
         sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
         index=True,
-        description="When the presence status changed"
-    )
-    duration_seconds: Optional[int] = Field(
-        default=None,
-        description="Duration of previous status in seconds (calculated when status changes)"
+        description="When the status changed"
     )
 
     user: User = Relationship(back_populates="presence_logs")
 
 
-class UserNameHistory(SQLModel, table=True):
+class ActivityLog(SQLModel, table=True):
     """
-    Tracks username and display name changes over time within the monitored guild.
+    Tracks user activities like playing games, streaming, listening to music.
 
-    Maintains a complete audit trail of all username, display name, and global name
-    changes, enabling historical analysis of user identity changes and nickname patterns.
+    This table records when users start/stop activities, enabling analysis of
+    gaming habits, streaming patterns, and entertainment preferences.
 
     Attributes:
         id: Auto-incrementing primary key
-        user_id: Discord user ID whose name changed
-        old_username: Previous username value
-        new_username: New username value
-        old_display_name: Previous display name (server nickname)
-        new_display_name: New display name (server nickname)
-        old_global_name: Previous global display name
-        new_global_name: New global display name
-        change_type: Type of change (username, display_name, global_name)
-        changed_at: Timestamp when the name change occurred
+        user_id: Discord user ID who started/stopped the activity
+        activity_type: Type of activity (playing, streaming, listening, watching)
+        activity_name: Name of the activity (game name, stream title, song, etc.)
+        started_at: When the activity started
+        ended_at: When the activity ended (NULL if still active)
     """
-    __tablename__ = "user_name_history"
+    __tablename__ = "activity_log"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -248,24 +269,171 @@ class UserNameHistory(SQLModel, table=True):
         description="Discord user ID"
     )
 
-    old_username: Optional[str] = Field(default=None, max_length=32, description="Previous username")
-    new_username: Optional[str] = Field(default=None, max_length=32, description="New username")
-    old_display_name: Optional[str] = Field(default=None, max_length=32, description="Previous display name")
-    new_display_name: Optional[str] = Field(default=None, max_length=32, description="New display name")
-    old_global_name: Optional[str] = Field(default=None, max_length=32, description="Previous global name")
-    new_global_name: Optional[str] = Field(default=None, max_length=32, description="New global name")
-
-    change_type: str = Field(
-        max_length=20,
-        description="Type of change: username, display_name, global_name"
+    activity_type: ActivityType = Field(
+        sa_type=SQLEnum(ActivityType, name="activity_type_enum"),
+        description="Type of activity (competing, custom, listening, playing, streaming, watching)",
+        sa_column_kwargs={"nullable": False}
+    )
+    activity_name: str = Field(
+        max_length=128,
+        description="Name of the activity (game name, stream title, etc.)",
+        sa_column_kwargs={"nullable": False}
     )
 
-    changed_at: datetime = Field(
+    started_at: datetime = Field(
         sa_type=DateTime(timezone=True),
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         index=True,
-        description="When the name change occurred"
+        description="When the activity started"
+    )
+    ended_at: Optional[datetime] = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        description="When the activity ended (NULL if still active)"
     )
 
+    user: "User" = Relationship(back_populates="activity_logs")
+
+
+class CustomStatus(SQLModel, table=True):
+    """
+    Tracks custom status changes separately from presence activity.
+
+    Custom statuses are user-set messages with optional emojis that appear
+    below their username. These change independently of activities and presence.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        user_id: Discord user ID who set the custom status
+        status_text: The custom status message text
+        emoji: Emoji used in the custom status (name or unicode)
+        set_at: When the custom status was set
+        cleared_at: When the custom status was cleared (NULL if still active)
+    """
+    __tablename__ = "custom_status"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        foreign_key="users.user_id",
+        sa_type=BigInteger,
+        index=True,
+        description="Discord user ID"
+    )
+
+    status_text: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="The custom status message text"
+    )
+    emoji: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Emoji used in custom status (name or unicode)"
+    )
+
+    set_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        index=True,
+        description="When the custom status was set"
+    )
+    cleared_at: Optional[datetime] = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        description="When the custom status was cleared (NULL if still active)"
+    )
+
+    user: "User" = Relationship(back_populates="custom_statuses")
+
+
+class UserNameHistory(SQLModel, table=True):
+    """
+    Stores all username states over time. This is the single source of truth for user names.
+
+    Each row represents a user's name state at a specific point in time.
+    The most recent row for each user contains their current names.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        user_id: Discord user ID
+        username: Discord username at this point in time
+        display_name: Discord display name (server nickname) at this point in time
+        global_name: Discord global display name at this point in time
+        effective_from: When this name state became active
+        effective_until: When this name state ended (NULL if current)
+    """
+    __tablename__ = "user_names_history"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        foreign_key="users.user_id",
+        sa_type=BigInteger,
+        index=True,
+        description="Discord user ID"
+    )
+
+    username: Optional[str] = Field(default=None, max_length=32, description="Discord username")
+    display_name: Optional[str] = Field(default=None, max_length=32, description="Discord display name")
+    global_name: Optional[str] = Field(default=None, max_length=32, description="Discord global display name")
+
+    effective_from: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        index=True,
+        description="When this name state became active"
+    )
+    effective_until: Optional[datetime] = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        index=True,
+        description="When this name state ended (NULL if current)"
+    )
+
+    user: "User" = Relationship(back_populates="name_history")
+
+
+Index('idx_message_activity_user_sent', 'message_activity.user_id', 'message_activity.sent_at')
+Index('idx_voice_activity_user_joined', 'voice_activity.user_id', 'voice_activity.joined_at')
+Index('idx_presence_status_log_user_changed', 'presence_status_log.user_id', 'presence_status_log.changed_at')
+Index('idx_presence_status_log_status_type', 'presence_status_log.status_type', 'presence_status_log.changed_at')
+Index('idx_activity_log_user_started', 'activity_log.user_id', 'activity_log.started_at')
+Index('idx_custom_status_user_set', 'custom_status.user_id', 'custom_status.set_at')
+Index('idx_user_names_current', 'user_names_history.user_id', 'user_names_history.effective_until')
+Index('idx_user_names_effective_from', 'user_names_history.user_id', 'user_names_history.effective_from')
+Index('idx_user_names_unique_current', 'user_names_history.user_id', unique=True,
+      postgresql_where='effective_until IS NULL', mysql_length={'user_id': None})
+
+CheckConstraint(
+    "activity_type IN ('competing', 'custom', 'listening', 'playing', 'streaming', 'watching')",
+    name='ck_activity_type_valid'
+)
+
+
+CheckConstraint(
+    "message_type IN ('default', 'recipient_add', 'recipient_remove', 'call', "
+    "'channel_name_change', 'channel_icon_change', 'channel_pinned_message', 'user_join', "
+    "'guild_boost', 'guild_boost_tier_1', 'guild_boost_tier_2', 'guild_boost_tier_3', "
+    "'channel_follow_add', 'guild_discovery_disqualified', 'guild_discovery_requalified', "
+    "'guild_discovery_grace_period_initial_warning', 'guild_discovery_grace_period_final_warning', "
+    "'thread_created', 'reply', 'chat_input_command', 'thread_starter_message', "
+    "'guild_invite_reminder', 'context_menu_command', 'role_subscription_purchase', "
+    "'interaction_premium_upsell', 'stage_start', 'stage_end', 'stage_speaker', "
+    "'stage_raise_hand', 'stage_topic', 'guild_application_premium_subscription', "
+    "'guild_incident_alert_mode_enabled', 'guild_incident_alert_mode_disabled', "
+    "'guild_incident_report_raid', 'guild_incident_report_false_alarm', "
+    "'purchase_notification', 'poll_result')",
+    name='ck_message_type_valid'
+)
+
+CheckConstraint(
+    "(effective_until IS NULL AND effective_from IS NOT NULL) OR "
+    "(effective_until IS NOT NULL AND effective_until > effective_from)",
+    name='ck_user_names_history_valid_period'
+)
+
+CheckConstraint(
+    "status_type IN ('online', 'idle', 'dnd', 'offline', 'streaming')",
+    name='ck_presence_status_enum_valid'
+)
 
 Base = SQLModel.metadata
