@@ -319,39 +319,36 @@ class Events(commands.Cog):
         if before_custom == after_custom:
             return
 
-        async with get_async_session() as session:
-            current_time = datetime.now(timezone.utc)
+        # Only add new custom status if we have one
+        if after_custom:
+            status_text, emoji = after_custom
 
-            # End previous custom status
-            if before_custom:
+            async with get_async_session() as session:
                 statement = select(CustomStatus).where(
                     CustomStatus.user_id == after.id,
-                    CustomStatus.cleared_at.is_(None)
+                    CustomStatus.status_text == status_text,
+                    CustomStatus.emoji == emoji
                 )
                 result = await session.execute(statement)
-                current_status = result.scalar_one_or_none()
+                existing_status = result.scalar_one_or_none()
 
-                if current_status:
-                    current_status.cleared_at = current_time
-                    session.add(current_status)
+                if not existing_status:
+                    custom_status = CustomStatus(
+                        user_id=after.id,
+                        status_text=status_text,
+                        emoji=emoji,
+                        set_at=datetime.now(timezone.utc)
+                    )
+                    session.add(custom_status)
+                    await session.commit()
 
-            # Start new custom status
-            if after_custom:
-                status_text, emoji = after_custom
-                custom_status = CustomStatus(
-                    user_id=after.id,
-                    status_text=status_text,
-                    emoji=emoji,
-                    set_at=current_time
-                )
-                session.add(custom_status)
-
-                emoji_part = f"{emoji} " if emoji else ""
-                events_logger.info(f"{after.name}: Custom Status -> {emoji_part}{status_text}")
-            else:
-                events_logger.info(f"{after.name}: Custom status cleared")
-
-            await session.commit()
+                    emoji_part = f"{emoji} " if emoji else ""
+                    events_logger.info(f"{after.name}: New Custom Status -> {emoji_part}{status_text}")
+                else:
+                    emoji_part = f"{emoji} " if emoji else ""
+                    events_logger.debug(f"{after.name}: Duplicate custom status ignored -> {emoji_part}{status_text}")
+        else:
+            events_logger.debug(f"{after.name}: Custom status cleared (no action needed)")
 
     def _extract_custom_status(self, activities):
         """Extract custom status from activities.
@@ -470,16 +467,12 @@ class Events(commands.Cog):
             current_time = datetime.now(timezone.utc)
 
             if before.channel and not after.channel:
-                # User left voice channel
                 await self._handle_voice_leave(member, before, current_time)
             elif not before.channel and after.channel:
-                # User joined voice channel
                 await self._handle_voice_join(member, after, current_time)
             elif before.channel and after.channel and before.channel != after.channel:
-                # User moved between channels
                 await self._handle_voice_move(member, before, after, current_time)
             elif before.channel and after.channel and before.channel == after.channel:
-                # Voice state changed within same channel
                 await self._handle_voice_state_change(member, before, after, current_time)
 
         except Exception as e:
@@ -752,18 +745,6 @@ class Events(commands.Cog):
             for activity in active_activities:
                 activity.ended_at = current_time
                 session.add(activity)
-
-            # End custom status
-            statement = select(CustomStatus).where(
-                CustomStatus.user_id == user_id,
-                CustomStatus.cleared_at.is_(None)
-            )
-            result = await session.execute(statement)
-            active_custom_status = result.scalar_one_or_none()
-
-            if active_custom_status:
-                active_custom_status.cleared_at = current_time
-                session.add(active_custom_status)
 
             await session.commit()
 

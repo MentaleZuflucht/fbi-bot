@@ -85,7 +85,7 @@ class User(SQLModel, table=True):
         user_id: Discord user ID (snowflake) - primary key
         first_seen: When the user first joined the Discord server (member since date)
     """
-    __tablename__ = "user"
+    __tablename__ = "users"
 
     user_id: int = Field(
         primary_key=True,
@@ -132,7 +132,7 @@ class MessageActivity(SQLModel, table=True):
         description="Discord message ID (snowflake)"
     )
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID who sent the message"
@@ -180,7 +180,7 @@ class VoiceSession(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -267,7 +267,7 @@ class PresenceStatusLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -311,7 +311,7 @@ class ActivityLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -348,7 +348,7 @@ class CustomStatus(SQLModel, table=True):
     Tracks custom status changes separately from presence activity.
 
     Custom statuses are user-set messages with optional emojis that appear
-    below their username.
+    below their username. Each record represents a unique custom status.
 
     Attributes:
         id: Auto-incrementing primary key
@@ -356,13 +356,12 @@ class CustomStatus(SQLModel, table=True):
         status_text: The custom status message text
         emoji: Emoji used in the custom status (name or unicode)
         set_at: When the custom status was set
-        cleared_at: When the custom status was cleared (NULL if still active)
     """
     __tablename__ = "custom_status"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -384,11 +383,6 @@ class CustomStatus(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         index=True,
         description="When the custom status was set"
-    )
-    cleared_at: Optional[datetime] = Field(
-        sa_type=DateTime(timezone=True),
-        default=None,
-        description="When the custom status was cleared (NULL if still active)"
     )
 
     user: "User" = Relationship(back_populates="custom_statuses")
@@ -413,7 +407,7 @@ class UserNameHistory(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        foreign_key="user.user_id",
+        foreign_key="users.user_id",
         sa_type=BigInteger,
         index=True,
         description="Discord user ID"
@@ -452,12 +446,15 @@ Index('idx_user_names_current', 'user_names_history.user_id', 'user_names_histor
 Index('idx_user_names_effective_from', 'user_names_history.user_id', 'user_names_history.effective_from')
 Index('idx_user_names_unique_current', 'user_names_history.user_id', unique=True,
       postgresql_where='effective_until IS NULL', mysql_length={'user_id': None})
+Index('idx_custom_status_unique_content', 'custom_status.user_id', 'custom_status.status_text', 'custom_status.emoji',
+      unique=True,
+      postgresql_where='cleared_at IS NULL')
+
 
 CheckConstraint(
     "activity_type IN ('COMPETING', 'CUSTOM', 'LISTENING', 'PLAYING', 'STREAMING', 'WATCHING')",
     name='ck_activity_type_valid'
 )
-
 
 CheckConstraint(
     "message_type IN ('DEFAULT', 'RECIPIENT_ADD', 'RECIPIENT_REMOVE', 'CALL', "
@@ -504,11 +501,6 @@ CheckConstraint(
 CheckConstraint(
     "(ended_at IS NULL) OR (ended_at >= started_at)",
     name='ck_activity_log_valid_period'
-)
-
-CheckConstraint(
-    "(cleared_at IS NULL) OR (cleared_at >= set_at)",
-    name='ck_custom_status_valid_period'
 )
 
 CheckConstraint(
