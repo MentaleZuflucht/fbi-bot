@@ -191,13 +191,26 @@ class Events(commands.Cog):
             statement = select(PresenceStatusLog).where(
                 PresenceStatusLog.user_id == after.id,
                 PresenceStatusLog.changed_at.is_(None)
-            )
+            ).order_by(PresenceStatusLog.set_at.desc()).limit(1)
+
             result = await session.execute(statement)
             current_status = result.scalar_one_or_none()
 
             if current_status:
                 current_status.changed_at = current_time
                 session.add(current_status)
+
+            # Clean up any other orphaned active statuses for this user
+            statement = select(PresenceStatusLog).where(
+                PresenceStatusLog.user_id == after.id,
+                PresenceStatusLog.changed_at.is_(None)
+            )
+            result = await session.execute(statement)
+            remaining_active = result.scalars().all()
+
+            for orphaned_status in remaining_active:
+                orphaned_status.changed_at = current_time
+                session.add(orphaned_status)
 
             # Create new status entry
             try:
@@ -726,7 +739,8 @@ class Events(commands.Cog):
             statement = select(PresenceStatusLog).where(
                 PresenceStatusLog.user_id == user_id,
                 PresenceStatusLog.changed_at.is_(None)
-            )
+            ).order_by(PresenceStatusLog.set_at.desc()).limit(1)
+
             result = await session.execute(statement)
             active_status = result.scalar_one_or_none()
 
