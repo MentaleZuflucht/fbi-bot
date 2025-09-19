@@ -125,6 +125,24 @@ class MessageActivity(SQLModel, table=True):
         sent_at: Timestamp when the message was sent
     """
     __tablename__ = "message_activity"
+    __table_args__ = (
+        Index('idx_message_activity_user_sent', 'user_id', 'sent_at'),
+        CheckConstraint(
+            "message_type IN ('DEFAULT', 'RECIPIENT_ADD', 'RECIPIENT_REMOVE', 'CALL', "
+            "'CHANNEL_NAME_CHANGE', 'CHANNEL_ICON_CHANGE', 'CHANNEL_PINNED_MESSAGE', 'USER_JOIN', "
+            "'GUILD_BOOST', 'GUILD_BOOST_TIER_1', 'GUILD_BOOST_TIER_2', 'GUILD_BOOST_TIER_3', "
+            "'CHANNEL_FOLLOW_ADD', 'GUILD_DISCOVERY_DISQUALIFIED', 'GUILD_DISCOVERY_REQUALIFIED', "
+            "'GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING', 'GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING', "
+            "'THREAD_CREATED', 'REPLY', 'CHAT_INPUT_COMMAND', 'THREAD_STARTER_MESSAGE', "
+            "'GUILD_INVITE_REMINDER', 'CONTEXT_MENU_COMMAND', 'ROLE_SUBSCRIPTION_PURCHASE', "
+            "'INTERACTION_PREMIUM_UPSELL', 'STAGE_START', 'STAGE_END', 'STAGE_SPEAKER', "
+            "'STAGE_RAISE_HAND', 'STAGE_TOPIC', 'GUILD_APPLICATION_PREMIUM_SUBSCRIPTION', "
+            "'GUILD_INCIDENT_ALERT_MODE_ENABLED', 'GUILD_INCIDENT_ALERT_MODE_DISABLED', "
+            "'GUILD_INCIDENT_REPORT_RAID', 'GUILD_INCIDENT_REPORT_FALSE_ALARM', "
+            "'PURCHASE_NOTIFICATION', 'POLL_RESULT')",
+            name='ck_message_type_valid'
+        ),
+    )
 
     message_id: int = Field(
         primary_key=True,
@@ -177,6 +195,13 @@ class VoiceSession(SQLModel, table=True):
         left_at: Timestamp when user left (NULL if still in channel)
     """
     __tablename__ = "voice_sessions"
+    __table_args__ = (
+        Index('idx_voice_sessions_user_joined', 'user_id', 'joined_at'),
+        CheckConstraint(
+            "(left_at IS NULL) OR (left_at >= joined_at)",
+            name='ck_voice_session_valid_period'
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -221,6 +246,18 @@ class VoiceStateLog(SQLModel, table=True):
         ended_at: When this state ended (NULL if still active)
     """
     __tablename__ = "voice_state_log"
+    __table_args__ = (
+        Index('idx_voice_state_log_session_started', 'session_id', 'started_at'),
+        Index('idx_voice_state_log_state_type', 'state_type', 'started_at'),
+        CheckConstraint(
+            "state_type IN ('DEAF', 'MUTE', 'SELF_DEAF', 'SELF_MUTE', 'SELF_STREAM', 'SELF_VIDEO')",
+            name='ck_voice_state_type_valid'
+        ),
+        CheckConstraint(
+            "(ended_at IS NULL) OR (ended_at >= started_at)",
+            name='ck_voice_state_log_valid_period'
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     session_id: int = Field(
@@ -264,6 +301,19 @@ class PresenceStatusLog(SQLModel, table=True):
         cleared_at: When this status ended (NULL if still active)
     """
     __tablename__ = "presence_status_log"
+    __table_args__ = (
+        Index('idx_presence_status_log_user_set', 'user_id', 'set_at'),
+        Index('idx_presence_status_log_status_type', 'status_type', 'set_at'),
+        Index('idx_presence_status_log_cleared', 'user_id', 'changed_at'),
+        CheckConstraint(
+            "status_type IN ('ONLINE', 'IDLE', 'DND', 'OFFLINE', 'STREAMING')",
+            name='ck_presence_status_enum_valid'
+        ),
+        CheckConstraint(
+            "(changed_at IS NULL) OR (changed_at >= set_at)",
+            name='ck_presence_status_valid_period'
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -308,6 +358,17 @@ class ActivityLog(SQLModel, table=True):
         ended_at: When the activity ended (NULL if still active)
     """
     __tablename__ = "activity_log"
+    __table_args__ = (
+        Index('idx_activity_log_user_started', 'user_id', 'started_at'),
+        CheckConstraint(
+            "activity_type IN ('COMPETING', 'CUSTOM', 'LISTENING', 'PLAYING', 'STREAMING', 'WATCHING')",
+            name='ck_activity_type_valid'
+        ),
+        CheckConstraint(
+            "(ended_at IS NULL) OR (ended_at >= started_at)",
+            name='ck_activity_log_valid_period'
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -358,6 +419,11 @@ class CustomStatus(SQLModel, table=True):
         set_at: When the custom status was set
     """
     __tablename__ = "custom_status"
+    __table_args__ = (
+        Index('idx_custom_status_user_set', 'user_id', 'set_at'),
+        Index('idx_custom_status_unique_content', 'user_id', 'status_text', 'emoji',
+              unique=True, postgresql_where='cleared_at IS NULL'),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -404,6 +470,17 @@ class UserNameHistory(SQLModel, table=True):
         effective_until: When this name state ended (NULL if current)
     """
     __tablename__ = "user_names_history"
+    __table_args__ = (
+        Index('idx_user_names_current', 'user_id', 'effective_until'),
+        Index('idx_user_names_effective_from', 'user_id', 'effective_from'),
+        Index('idx_user_names_unique_current', 'user_id', unique=True,
+              postgresql_where='effective_until IS NULL', mysql_length={'user_id': None}),
+        CheckConstraint(
+            "(effective_until IS NULL AND effective_from IS NOT NULL) OR "
+            "(effective_until IS NOT NULL AND effective_until > effective_from)",
+            name='ck_user_names_history_valid_period'
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
@@ -432,80 +509,5 @@ class UserNameHistory(SQLModel, table=True):
 
     user: "User" = Relationship(back_populates="name_history")
 
-
-Index('idx_message_activity_user_sent', 'message_activity.user_id', 'message_activity.sent_at')
-Index('idx_voice_sessions_user_joined', 'voice_sessions.user_id', 'voice_sessions.joined_at')
-Index('idx_voice_state_log_session_started', 'voice_state_log.session_id', 'voice_state_log.started_at')
-Index('idx_voice_state_log_state_type', 'voice_state_log.state_type', 'voice_state_log.started_at')
-Index('idx_presence_status_log_user_set', 'presence_status_log.user_id', 'presence_status_log.set_at')
-Index('idx_presence_status_log_status_type', 'presence_status_log.status_type', 'presence_status_log.set_at')
-Index('idx_presence_status_log_cleared', 'presence_status_log.user_id', 'presence_status_log.cleared_at')
-Index('idx_activity_log_user_started', 'activity_log.user_id', 'activity_log.started_at')
-Index('idx_custom_status_user_set', 'custom_status.user_id', 'custom_status.set_at')
-Index('idx_user_names_current', 'user_names_history.user_id', 'user_names_history.effective_until')
-Index('idx_user_names_effective_from', 'user_names_history.user_id', 'user_names_history.effective_from')
-Index('idx_user_names_unique_current', 'user_names_history.user_id', unique=True,
-      postgresql_where='effective_until IS NULL', mysql_length={'user_id': None})
-Index('idx_custom_status_unique_content', 'custom_status.user_id', 'custom_status.status_text', 'custom_status.emoji',
-      unique=True,
-      postgresql_where='cleared_at IS NULL')
-
-
-CheckConstraint(
-    "activity_type IN ('COMPETING', 'CUSTOM', 'LISTENING', 'PLAYING', 'STREAMING', 'WATCHING')",
-    name='ck_activity_type_valid'
-)
-
-CheckConstraint(
-    "message_type IN ('DEFAULT', 'RECIPIENT_ADD', 'RECIPIENT_REMOVE', 'CALL', "
-    "'CHANNEL_NAME_CHANGE', 'CHANNEL_ICON_CHANGE', 'CHANNEL_PINNED_MESSAGE', 'USER_JOIN', "
-    "'GUILD_BOOST', 'GUILD_BOOST_TIER_1', 'GUILD_BOOST_TIER_2', 'GUILD_BOOST_TIER_3', "
-    "'CHANNEL_FOLLOW_ADD', 'GUILD_DISCOVERY_DISQUALIFIED', 'GUILD_DISCOVERY_REQUALIFIED', "
-    "'GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING', 'GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING', "
-    "'THREAD_CREATED', 'REPLY', 'CHAT_INPUT_COMMAND', 'THREAD_STARTER_MESSAGE', "
-    "'GUILD_INVITE_REMINDER', 'CONTEXT_MENU_COMMAND', 'ROLE_SUBSCRIPTION_PURCHASE', "
-    "'INTERACTION_PREMIUM_UPSELL', 'STAGE_START', 'STAGE_END', 'STAGE_SPEAKER', "
-    "'STAGE_RAISE_HAND', 'STAGE_TOPIC', 'GUILD_APPLICATION_PREMIUM_SUBSCRIPTION', "
-    "'GUILD_INCIDENT_ALERT_MODE_ENABLED', 'GUILD_INCIDENT_ALERT_MODE_DISABLED', "
-    "'GUILD_INCIDENT_REPORT_RAID', 'GUILD_INCIDENT_REPORT_FALSE_ALARM', "
-    "'PURCHASE_NOTIFICATION', 'POLL_RESULT')",
-    name='ck_message_type_valid'
-)
-
-CheckConstraint(
-    "(effective_until IS NULL AND effective_from IS NOT NULL) OR "
-    "(effective_until IS NOT NULL AND effective_until > effective_from)",
-    name='ck_user_names_history_valid_period'
-)
-
-CheckConstraint(
-    "status_type IN ('ONLINE', 'IDLE', 'DND', 'OFFLINE', 'STREAMING')",
-    name='ck_presence_status_enum_valid'
-)
-
-CheckConstraint(
-    "state_type IN ('DEAF', 'MUTE', 'SELF_DEAF', 'SELF_MUTE', 'SELF_STREAM', 'SELF_VIDEO')",
-    name='ck_voice_state_type_valid'
-)
-
-CheckConstraint(
-    "(ended_at IS NULL) OR (ended_at >= started_at)",
-    name='ck_voice_state_log_valid_period'
-)
-
-CheckConstraint(
-    "(left_at IS NULL) OR (left_at >= joined_at)",
-    name='ck_voice_session_valid_period'
-)
-
-CheckConstraint(
-    "(ended_at IS NULL) OR (ended_at >= started_at)",
-    name='ck_activity_log_valid_period'
-)
-
-CheckConstraint(
-    "(changed_at IS NULL) OR (changed_at >= set_at)",
-    name='ck_presence_status_valid_period'
-)
 
 Base = SQLModel.metadata
