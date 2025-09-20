@@ -421,8 +421,6 @@ class CustomStatus(SQLModel, table=True):
     __tablename__ = "custom_status"
     __table_args__ = (
         Index('idx_custom_status_user_set', 'user_id', 'set_at'),
-        Index('idx_custom_status_unique_content', 'user_id', 'status_text', 'emoji',
-              unique=True, postgresql_where='cleared_at IS NULL'),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
