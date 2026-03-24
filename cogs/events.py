@@ -60,6 +60,10 @@ class Events(commands.Cog):
             member: Optional member object for display name.
             session: Database session for operations.
         """
+        new_username = user.name
+        new_display_name = member.display_name if member else user.display_name
+        new_global_name = user.global_name
+
         # End any existing current name entries
         statement = select(UserNameHistory).where(
             UserNameHistory.user_id == user.id,
@@ -67,6 +71,13 @@ class Events(commands.Cog):
         )
         result = await session.execute(statement)
         current_entries = result.scalars().all()
+
+        if current_entries:
+            entry = current_entries[0]
+            if (entry.username == new_username and
+                    entry.display_name == new_display_name and
+                    entry.global_name == new_global_name):
+                return
 
         current_time = datetime.now(timezone.utc)
         for entry in current_entries:
@@ -76,9 +87,9 @@ class Events(commands.Cog):
         # Create new current name entry
         name_entry = UserNameHistory(
             user_id=user.id,
-            username=user.name,
-            display_name=member.display_name if member else user.display_name,
-            global_name=user.global_name,
+            username=new_username,
+            display_name=new_display_name,
+            global_name=new_global_name,
             effective_from=current_time
         )
         session.add(name_entry)
@@ -131,6 +142,52 @@ class Events(commands.Cog):
                 await self._handle_name_change(before, after)
         except Exception as e:
             events_logger.error(f"Error handling member update: {e}")
+
+    @commands.Cog.listener()
+    async def on_user_update(self, before: discord.User, after: discord.User):
+        """Handle user-level updates (global display name and username changes).
+
+        Discord fires this event instead of on_member_update when the change is
+        account-wide (global name, username, avatar) rather than guild-specific.
+
+        Args:
+            before: User state before the update.
+            after: User state after the update.
+        """
+        try:
+            if before.name == after.name and before.global_name == after.global_name:
+                return
+
+            member = None
+            for guild in self.bot.guilds:
+                member = guild.get_member(after.id)
+                if member:
+                    break
+
+            await self._handle_user_name_change(before, after, member)
+        except Exception as e:
+            events_logger.error(f"Error handling user update: {e}")
+
+    async def _handle_user_name_change(self, before: discord.User, after: discord.User,
+                                       member: Optional[discord.Member]):
+        """Handle global name / username changes from on_user_update.
+
+        Args:
+            before: User state before name change.
+            after: User state after name change.
+            member: Member object from any shared guild, if available.
+        """
+        async with get_async_session() as session:
+            await self.get_or_create_user(after, member)
+            await self._create_name_history_entry(after, member, session)
+
+            changes = []
+            if before.name != after.name:
+                changes.append(f"username: {before.name} -> {after.name}")
+            if before.global_name != after.global_name:
+                changes.append(f"global_name: {before.global_name} -> {after.global_name}")
+
+            events_logger.info(f"User name change for {after.id}: {', '.join(changes)}")
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
