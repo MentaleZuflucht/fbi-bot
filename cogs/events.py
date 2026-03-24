@@ -99,6 +99,131 @@ class Events(commands.Cog):
     async def on_ready(self):
         """Bot ready event."""
         events_logger.info(f'Bot ready! Logged in as {self.bot.user} (ID: {self.bot.user.id})')
+        await self._reconcile_on_startup()
+
+    async def _reconcile_on_startup(self):
+        """Close stale open sessions left over from bot downtime.
+
+        Compares every open DB record against the live Discord state and closes
+        anything that is no longer true (user left voice, stopped activity, etc.).
+        """
+        events_logger.info("Reconciling stale sessions from bot downtime...")
+        async with get_async_session() as session:
+            current_time = datetime.now(timezone.utc)
+
+            voice_closed = await self._reconcile_voice_sessions(current_time, session)
+            activity_closed = await self._reconcile_activities(current_time, session)
+            presence_reconciled = await self._reconcile_presence(current_time, session)
+
+            await session.commit()
+            events_logger.info(
+                f"Reconciliation complete: {voice_closed} voice sessions closed, "
+                f"{activity_closed} activities closed, "
+                f"{presence_reconciled} presence statuses corrected"
+            )
+
+    async def _reconcile_voice_sessions(self, current_time: datetime, session) -> int:
+        """Close open voice sessions where the user is no longer in that channel.
+
+        Args:
+            current_time: Timestamp to use as the close time.
+            session: Database session for operations.
+
+        Returns:
+            int: Number of sessions closed.
+        """
+        statement = select(VoiceSession).where(VoiceSession.left_at.is_(None))
+        result = await session.execute(statement)
+        open_sessions = result.scalars().all()
+
+        closed = 0
+        for voice_session in open_sessions:
+            channel = self.bot.get_channel(voice_session.channel_id)
+            currently_in_channel = (
+                channel is not None and
+                hasattr(channel, 'members') and
+                any(m.id == voice_session.user_id for m in channel.members)
+            )
+            if not currently_in_channel:
+                voice_session.left_at = current_time
+                session.add(voice_session)
+                await self._end_active_voice_states(voice_session.id, current_time, session)
+                closed += 1
+
+        return closed
+
+    async def _reconcile_activities(self, current_time: datetime, session) -> int:
+        """Close open activity logs for activities the user is no longer doing.
+
+        Args:
+            current_time: Timestamp to use as the end time.
+            session: Database session for operations.
+
+        Returns:
+            int: Number of activity records closed.
+        """
+        current_activities: dict[int, set] = {}
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.id not in current_activities:
+                    current_activities[member.id] = self._extract_real_activities(member.activities)
+
+        statement = select(ActivityLog).where(ActivityLog.ended_at.is_(None))
+        result = await session.execute(statement)
+        open_activities = result.scalars().all()
+
+        closed = 0
+        for activity in open_activities:
+            user_current = current_activities.get(activity.user_id, set())
+            if (activity.activity_type, activity.activity_name) not in user_current:
+                activity.ended_at = current_time
+                session.add(activity)
+                closed += 1
+
+        return closed
+
+    async def _reconcile_presence(self, current_time: datetime, session) -> int:
+        """Correct open presence status logs that no longer match the user's live status.
+
+        Closes any mismatched open record and opens a fresh one for the real
+        current status so the timeline stays continuous.
+
+        Args:
+            current_time: Timestamp to use for corrections.
+            session: Database session for operations.
+
+        Returns:
+            int: Number of presence records corrected.
+        """
+        current_statuses: dict[int, DiscordStatus] = {}
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.id not in current_statuses:
+                    try:
+                        current_statuses[member.id] = DiscordStatus(member.status.name.lower())
+                    except ValueError:
+                        current_statuses[member.id] = DiscordStatus.OFFLINE
+
+        statement = select(PresenceStatusLog).where(PresenceStatusLog.changed_at.is_(None))
+        result = await session.execute(statement)
+        open_statuses = result.scalars().all()
+
+        corrected = 0
+        for status_log in open_statuses:
+            current_status = current_statuses.get(status_log.user_id)
+            if current_status is None or current_status != status_log.status_type:
+                status_log.changed_at = current_time
+                session.add(status_log)
+                corrected += 1
+
+                if current_status is not None:
+                    session.add(PresenceStatusLog(
+                        user_id=status_log.user_id,
+                        status_type=current_status,
+                        set_at=current_time
+                    ))
+
+        return corrected
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
