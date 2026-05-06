@@ -6,18 +6,17 @@ A comprehensive Discord surveillance bot that monitors and tracks all user activ
 
 This bot silently monitors your Discord server and collects detailed analytics on:
 
-- **👥 User Activity**: Join dates, member statistics, and user information
-- **💬 Message Tracking**: Message counts, activity patterns, and communication stats (content not stored)
-- **🎤 Voice Activity**: Voice channel usage, session durations, and participation metrics  
-- **🟢 Presence Monitoring**: Status changes, activity tracking, and online patterns
-- **📝 Name History**: Complete audit trail of username and nickname changes
+- **👥 User Activity**: Join dates, member statistics and user information
+- **💬 Message Tracking**: Message counts, activity patterns and messaging stats (content not stored)
+- **🎤 Voice Activity**: Voice channel usage, session durations and voice state changes 
+- **🟢 Presence Monitoring**: Status changes, activity tracking and online patterns
+- **📝 User + Channel Name History**: Complete audit trail of username and channel name changes
 
 ## Data Collected
 
 ### User Information
-- Discord user IDs, usernames, display names
+- Discord user IDs, usernames, display names, global names
 - Server join dates ("member since" data)
-- Username/nickname change history
 
 ### Activity Metrics  
 - Message frequency and timing patterns
@@ -48,7 +47,7 @@ The bot requires **all 3 privileged intents** to be enabled in the Discord Devel
 
 ### Required Bot Permissions
 When inviting the bot to your server, ensure it has these permissions:
-- **Connect** - To join voice channels and monitor voice activity
+- **Connect** - To monitor voice activity
 - **Read Message History** - To access historical messages for analysis
 - **View Channels** - To see all channels and monitor activity across the server
 
