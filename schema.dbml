@@ -1,0 +1,197 @@
+// FBI-Bot database schema (from models.py)
+// Paste into https://dbdiagram.io to view as an ER diagram
+// Also works on: https://dbml-editor.alswl.com / https://databasediagram.com
+
+Enum message_type_enum {
+  default
+  recipient_add
+  recipient_remove
+  call
+  channel_name_change
+  channel_icon_change
+  channel_pinned_message
+  user_join
+  guild_boost
+  guild_boost_tier_1
+  guild_boost_tier_2
+  guild_boost_tier_3
+  channel_follow_add
+  guild_discovery_disqualified
+  guild_discovery_requalified
+  guild_discovery_grace_period_initial_warning
+  guild_discovery_grace_period_final_warning
+  thread_created
+  reply
+  chat_input_command
+  thread_starter_message
+  guild_invite_reminder
+  context_menu_command
+  role_subscription_purchase
+  interaction_premium_upsell
+  stage_start
+  stage_end
+  stage_speaker
+  stage_raise_hand
+  stage_topic
+  guild_application_premium_subscription
+  guild_incident_alert_mode_enabled
+  guild_incident_alert_mode_disabled
+  guild_incident_report_raid
+  guild_incident_report_false_alarm
+  purchase_notification
+  poll_result
+}
+
+Enum discord_status_enum {
+  online
+  idle
+  dnd
+  offline
+  streaming
+}
+
+Enum activity_type_enum {
+  competing
+  custom
+  listening
+  playing
+  streaming
+  watching
+}
+
+Enum voice_state_type_enum {
+  deaf
+  mute
+  self_deaf
+  self_mute
+  self_stream
+  self_video
+}
+
+Table users {
+  user_id bigint [pk, note: 'Discord snowflake']
+  first_seen timestamptz [not null, default: `now()`, note: 'Member since']
+}
+
+Table message_activity {
+  message_id bigint [pk, note: 'Discord snowflake']
+  user_id bigint [not null, ref: > users.user_id]
+  channel_id bigint [not null, note: 'Discord channel snowflake']
+  message_type message_type_enum [not null, default: 'default']
+  has_attachments boolean [not null, default: false]
+  has_embeds boolean [not null, default: false]
+  character_count int [note: 'Message content length']
+  sent_at timestamptz [not null]
+
+  indexes {
+    (user_id, sent_at) [name: 'idx_message_activity_user_sent']
+    user_id
+    channel_id
+    sent_at
+  }
+}
+
+Table voice_sessions {
+  id int [pk, increment]
+  user_id bigint [not null, ref: > users.user_id]
+  channel_id bigint [not null, note: 'Voice channel snowflake']
+  joined_at timestamptz [not null]
+  left_at timestamptz [note: 'NULL if still in channel']
+
+  indexes {
+    (user_id, joined_at) [name: 'idx_voice_sessions_user_joined']
+    user_id
+    channel_id
+    joined_at
+  }
+
+  Note: 'left_at IS NULL OR left_at >= joined_at'
+}
+
+Table voice_state_log {
+  id int [pk, increment]
+  session_id int [not null, ref: > voice_sessions.id]
+  state_type voice_state_type_enum [not null]
+  started_at timestamptz [not null, default: `now()`]
+  ended_at timestamptz [note: 'NULL if still active']
+
+  indexes {
+    (session_id, started_at) [name: 'idx_voice_state_log_session_started']
+    (state_type, started_at) [name: 'idx_voice_state_log_state_type']
+    session_id
+    state_type
+    started_at
+  }
+
+  Note: 'ended_at IS NULL OR ended_at >= started_at'
+}
+
+Table presence_status_log {
+  id int [pk, increment]
+  user_id bigint [not null, ref: > users.user_id]
+  status_type discord_status_enum [not null]
+  set_at timestamptz [not null, default: `now()`]
+  changed_at timestamptz [note: 'NULL if still active']
+
+  indexes {
+    (user_id, set_at) [name: 'idx_presence_status_log_user_set']
+    (status_type, set_at) [name: 'idx_presence_status_log_status_type']
+    (user_id, changed_at) [name: 'idx_presence_status_log_cleared']
+    user_id
+    status_type
+    set_at
+  }
+
+  Note: 'changed_at IS NULL OR changed_at >= set_at'
+}
+
+Table activity_log {
+  id int [pk, increment]
+  user_id bigint [not null, ref: > users.user_id]
+  activity_type activity_type_enum [not null]
+  activity_name varchar(128) [not null]
+  started_at timestamptz [not null, default: `now()`]
+  ended_at timestamptz [note: 'NULL if still active']
+
+  indexes {
+    (user_id, started_at) [name: 'idx_activity_log_user_started']
+    user_id
+    started_at
+  }
+
+  Note: 'ended_at IS NULL OR ended_at >= started_at'
+}
+
+Table custom_status {
+  id int [pk, increment]
+  user_id bigint [not null, ref: > users.user_id]
+  status_text varchar(128)
+  emoji varchar(64)
+  set_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (user_id, set_at) [name: 'idx_custom_status_user_set']
+    user_id
+    set_at
+  }
+}
+
+Table user_names_history {
+  id int [pk, increment]
+  user_id bigint [not null, ref: > users.user_id]
+  username varchar(32) [not null]
+  display_name varchar(32)
+  global_name varchar(32)
+  effective_from timestamptz [not null, default: `now()`]
+  effective_until timestamptz [note: 'NULL if current']
+
+  indexes {
+    (user_id, effective_until) [name: 'idx_user_names_current']
+    (user_id, effective_from) [name: 'idx_user_names_effective_from']
+    user_id
+    effective_from
+    effective_until
+  }
+
+  Note: 'Single source for user names; current row has effective_until IS NULL'
+}
